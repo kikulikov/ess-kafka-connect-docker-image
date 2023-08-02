@@ -1,77 +1,75 @@
 #!/usr/bin/env bash
 
-CONFIG=
-DEBUG=FALSE
+# Enable debug
+# set -x
 
-for i in "$@"; do
-    case $i in
-        --config=*)
-        CONFIG="${i#*=}"
-        shift
-        ;;
-        --debug)
-        DEBUG=TRUE
-        shift
-        ;;
-        -*|--*)
-        echo "Unknown option $i"
-        exit 1
-        ;;
-        *)
-        ;;
+CONFIG=
+DOCKER_NAME=
+DOCKER_TAG=
+
+while getopts c:n:t: flag
+do
+    case "${flag}" in
+        c ) CONFIG=${OPTARG};;
+        n ) DOCKER_NAME=${OPTARG};;
+        t ) DOCKER_TAG=${OPTARG};;
     esac
 done
 
 if [[ -z "$CONFIG" ]]; then
-    echo "--config parameter is missing"
+    echo "-c (config) parameter is missing"
     exit 1
 fi
 
-if [[ "$DEBUG" == "TRUE" ]]; then
-    echo "Debug mode enabled $DEBUG"
-    set -x
+if [[ -z "$DOCKER_NAME" ]]; then
+    echo "-n (docker name) parameter is missing"
+    exit 1
+fi
+
+if [[ -z "$CONFIG" ]]; then
+    echo "-t (docker tag) parameter is missing"
+    exit 1
 fi
 
 cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
 
 echo "Reading properties from $CONFIG"
 
+if [[ ! -f "$CONFIG" ]]; then
+    echo "File $CONFIG is not there, aborting."
+    exit 1
+fi
+
 function prop {
     grep "${1}" $CONFIG | cut -d'=' -f2
 }
 
-declare -a BUCKETS=($(prop 'kafka\.connect\.images'))
-
 rm -rf pluginpath && mkdir pluginpath
 rm -rf classpath && mkdir classpath
-rm -rf Dockerfile && touch Dockerfile
-echo "FROM confluentinc/cp-server-connect:7.3.4" > Dockerfile
 
-for i in "${BUCKETS[@]}"
+declare -a PP=($(prop "kafka\.connect\.pluginpath="))
+for s in "${PP[@]}"
 do
-    declare -a PP=($(prop "kafka\.connect\.$i\.pluginpath="))
-    for s in "${PP[@]}"
-    do
-        item=$(prop "kafka\.connect\.$i\.pluginpath\.$s=")
-        wget -q $item -P ./pluginpath
+    item=$(prop "kafka\.connect\.pluginpath\.$s=")
+    wget -q $item -P ./pluginpath
 
-        if [[ $name == *zip ]]; then
-            unzip ./pluginpath/$item
-        fi
-    done
-
-    # declare -a CP=($(prop "kafka.connect.$i.classpath"))
-    # echo "$CP"
+    if [[ $name == *zip ]]; then
+        unzip ./pluginpath/$item
+    fi
 done
 
-# while getopts u:a:f: flag
-# do
-#     case "${flag}" in
-#         u) username=${OPTARG};;
-#         a) age=${OPTARG};;
-#         f) fullname=${OPTARG};;
-#     esac
-# done
-# echo "Username: $username";
-# echo "Age: $age";
-# echo "Full Name: $fullname";
+declare -a CP=($(prop "kafka\.connect\.classpath="))
+for s in "${CP[@]}"
+do
+    item=$(prop "kafka\.connect\.classpath\.$s=")
+    wget -q $item -P ./classpath
+
+    if [[ $name == *zip ]]; then
+        unzip ./classpath/$item
+    fi
+done
+
+echo .
+echo "Building the docker image"
+set -x
+docker build -t "$DOCKER_NAME:$DOCKER_TAG" .
